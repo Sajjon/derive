@@ -162,25 +162,62 @@ impl Profile {
     }
 }
 
-async fn _derive_many(
+pub enum PolyDeriveRequestKind {
+    OARS,
+}
+
+pub struct PolyDeriveInput {
     factor_sources: FactorSources,
-    partial_derivation_request: PartialDerivationRequests,
-    maybe_cache: impl Into<Option<Cache>>,
-    maybe_onchain_analyser: impl Into<Option<OnChainAnalyzer>>,
-    maybe_profile_analyser: impl Into<Option<ProfileAnalyzer>>,
+    request_kind: PolyDeriveRequestKind,
+    maybe_cache: Option<Cache>,
+    maybe_onchain_analyser: Option<OnChainAnalyzer>,
+    maybe_profile_analyser: Option<ProfileAnalyzer>,
     derivation_interactors: Arc<dyn DerivationInteractors>,
-) -> Result<DerivationsAndAnalysis> {
-    let maybe_cache = maybe_cache.into();
-    let maybe_onchain_analyser = maybe_onchain_analyser.into();
-    let maybe_profile_analyser = maybe_profile_analyser.into();
+}
+impl PolyDeriveInput {
+    fn new(
+        factor_sources: FactorSources,
+        request_kind: PolyDeriveRequestKind,
+        maybe_cache: impl Into<Option<Cache>>,
+        maybe_onchain_analyser: impl Into<Option<OnChainAnalyzer>>,
+        maybe_profile_analyser: impl Into<Option<ProfileAnalyzer>>,
+        derivation_interactors: Arc<dyn DerivationInteractors>,
+    ) -> Self {
+        let maybe_cache = maybe_cache.into();
+        let maybe_onchain_analyser = maybe_onchain_analyser.into();
+        let maybe_profile_analyser = maybe_profile_analyser.into();
 
-    assert!(factor_sources.can_derive(&partial_derivation_request));
-    assert!(
-        !(maybe_cache.is_none()
-            && maybe_onchain_analyser.is_none()
-            && maybe_profile_analyser.is_none())
-    );
+        assert!(
+            !(maybe_cache.is_none()
+                && maybe_onchain_analyser.is_none()
+                && maybe_profile_analyser.is_none())
+        );
+        Self {
+            factor_sources,
+            request_kind,
+            maybe_cache,
+            maybe_onchain_analyser,
+            maybe_profile_analyser,
+            derivation_interactors,
+        }
+    }
+    pub fn oars(
+        factor_sources: FactorSources,
+        gateway: Arc<dyn Gateway>,
+        derivation_interactors: Arc<dyn DerivationInteractors>,
+    ) -> Self {
+        Self::new(
+            factor_sources,
+            PolyDeriveRequestKind::OARS,
+            None,
+            OnChainAnalyzer::new(gateway),
+            None,
+            derivation_interactors,
+        )
+    }
+}
 
+async fn _poly_derive(input: PolyDeriveInput) -> Result<DerivationsAndAnalysis> {
     // let mut instances = FactorInstances::default();
     // let indices = ...;
     // let requests = partial_derivation_request.materialize(indices);
@@ -197,14 +234,11 @@ pub async fn oars(
     derivation_interactors: Arc<dyn DerivationInteractors>,
     gateway: Arc<dyn Gateway>,
 ) -> Result<(Profile, Cache)> {
-    let analysis = _derive_many(
+    let analysis = _poly_derive(PolyDeriveInput::oars(
         factor_sources.clone(),
-        PartialDerivationRequests::default(),
-        None,
-        OnChainAnalyzer::new(gateway),
-        None,
+        gateway,
         derivation_interactors,
-    )
+    ))
     .await?;
 
     let cache = Cache::new(analysis.probably_free);
