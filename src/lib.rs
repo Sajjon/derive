@@ -15,34 +15,65 @@ pub struct FactorSource {
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FactorSourceIDFromHash;
+pub struct FactorSourceIDFromHash(pub uuid::Uuid);
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FactorInstance {
     derivation_path: DerivationPath,
     factor_source_id: FactorSourceIDFromHash,
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct NetworkID;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum NetworkID {
+    Mainnet,
+    Testnet,
+}
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CAP26KeyKind;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CAP26KeyKind {
+    T9n,
+    Rola,
+}
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CAP26EntityKind;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CAP26EntityKind {
+    Account,
+    Identity,
+}
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct KeySpace;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum KeySpace {
+    Unsecurified,
+    Securified,
+}
 
 /// Lacks the index
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PartialDerivationRequest {
-    factor_source_id: FactorSourceIDFromHash,
-    network_id: NetworkID,
-    key_kind: CAP26KeyKind,
-    entity_kind: CAP26EntityKind,
-    key_space: KeySpace,
+pub type PartialDerivationRequest = AbstractDerivationRequest<KeySpace>;
+impl PartialDerivationRequest {
+    pub fn key_space(&self) -> KeySpace {
+        self.abstract_index.clone()
+    }
+}
+
+/// A full derivation path with the index
+pub type DerivationPath = AbstractDerivationRequest<CAP26Index>;
+impl DerivationPath {
+    pub fn index(&self) -> CAP26Index {
+        self.abstract_index.clone()
+    }
+
+    pub fn key_space(&self) -> KeySpace {
+        self.index().key_space()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AbstractDerivationRequest<T> {
+    pub factor_source_id: FactorSourceIDFromHash,
+    pub network_id: NetworkID,
+    pub entity_kind: CAP26EntityKind,
+    pub key_kind: CAP26KeyKind,
+    abstract_index: T,
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
@@ -116,10 +147,22 @@ pub struct DerivationsAndAnalysis {
     pub known_taken: KnownTakenFactorInstances,
     pub probably_free: ProbablyFreeFactorInstances,
 }
-impl DerivationsAndAnalysis {}
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct DerivationPath;
+pub type HDPathValue = u32;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CAP26Index {
+    Unsecurified(HDPathValue),
+    Securified(HDPathValue),
+}
+impl CAP26Index {
+    pub fn key_space(&self) -> KeySpace {
+        match self {
+            CAP26Index::Unsecurified(_) => KeySpace::Unsecurified,
+            CAP26Index::Securified(_) => KeySpace::Securified,
+        }
+    }
+}
 
 pub struct KeysCollector;
 impl KeysCollector {
@@ -174,6 +217,7 @@ pub struct PolyDeriveInput {
     maybe_profile_analyser: Option<ProfileAnalyzer>,
     derivation_interactors: Arc<dyn DerivationInteractors>,
 }
+
 impl PolyDeriveInput {
     fn new(
         factor_sources: FactorSources,
@@ -201,6 +245,7 @@ impl PolyDeriveInput {
             derivation_interactors,
         }
     }
+
     pub fn oars(
         factor_sources: FactorSources,
         gateway: Arc<dyn Gateway>,
@@ -214,6 +259,22 @@ impl PolyDeriveInput {
             None,
             derivation_interactors,
         )
+    }
+}
+
+impl PolyDeriveInput {
+    pub fn derivation_paths(&self) -> IndexMap<FactorSourceIDFromHash, IndexSet<DerivationPath>> {
+        match self.request_kind {
+            PolyDeriveRequestKind::OARS => {
+                let mut derivation_paths = IndexMap::new();
+                for factor_source in self.factor_sources.0.iter() {
+                    let mut paths = IndexSet::new();
+                    paths.insert(DerivationPath::default());
+                    derivation_paths.insert(factor_source.clone(), paths);
+                }
+                derivation_paths
+            }
+        }
     }
 }
 
