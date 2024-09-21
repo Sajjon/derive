@@ -3,7 +3,7 @@
 
 type Result<T, E = String> = std::result::Result<T, E>;
 
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -13,6 +13,9 @@ pub struct FactorSource {
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FactorSourceIDFromHash;
+
+#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FactorInstance;
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NetworkID;
@@ -47,11 +50,14 @@ impl FactorSources {
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct PartialDerivationRequests(IndexSet<PartialDerivationRequest>);
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct KnownTakenFactorInstances;
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct KnownTakenFactorInstances(pub IndexSet<FactorInstance>);
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ProbablyFreeFactorInstances;
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct ProbablyFreeFactorInstances(pub IndexSet<FactorInstance>);
+
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct FactorInstances(pub IndexSet<FactorInstance>);
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OnChainAnalyzer;
@@ -66,10 +72,28 @@ pub trait DerivationInteractors {
     fn call(&self);
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct DerivationsAndAnalysis {
     pub known_taken: KnownTakenFactorInstances,
     pub probably_free: ProbablyFreeFactorInstances,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DerivationPath;
+
+pub struct KeysCollector;
+impl KeysCollector {
+    pub fn new(
+        factor_sources: FactorSources,
+        derivation_paths: IndexMap<FactorSourceIDFromHash, IndexSet<DerivationPath>>,
+        interactors: Arc<dyn DerivationInteractors>,
+    ) -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn derive() -> Result<FactorInstances> {
+        Ok(FactorInstances::default())
+    }
 }
 
 pub async fn _derive_many(
