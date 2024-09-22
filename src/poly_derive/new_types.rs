@@ -1,3 +1,5 @@
+use std::net;
+
 use crate::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -119,6 +121,10 @@ impl FactorSources {
     pub fn factor_sources(&self) -> IndexSet<FactorSource> {
         self.0.clone().into_iter().collect()
     }
+    pub fn insert(&mut self, factor_source: FactorSource) {
+        assert!(!self.0.iter().any(|f| f == &factor_source));
+        self.0.push(factor_source);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -163,35 +169,41 @@ impl FactorInstanceInSecurifiedSpace {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct DerivedFactorInstances {
-    pub network_id: NetworkID,
     unsecurified_factor_instances: IndexSet<FactorInstanceInUnsecurifiedSpace>,
-    securified_factor_instances: IndexSet<FactorInstanceInSecurifiedSpace>,
+    securified_matrices_of_factor_instances: IndexSet<MatrixOfFactorInstances>,
 }
 impl DerivedFactorInstances {
+    pub fn unsecurified_accounts(&self, network_id: NetworkID) -> IndexSet<UnsecurifiedAccount> {
+        self.unsecurified_factor_instances()
+            .into_iter()
+            .map(|fi| UnsecurifiedAccount::new(fi, network_id))
+            .collect()
+    }
+    pub fn accounts_unsecurified(&self, network_id: NetworkID) -> IndexSet<Account> {
+        self.unsecurified_accounts(network_id)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
     pub fn unsecurified_factor_instances(&self) -> IndexSet<FactorInstanceInUnsecurifiedSpace> {
         self.unsecurified_factor_instances.clone()
     }
 
-    pub fn account_addresses_of_unsecurified(&self) -> IndexSet<AccountAddress> {
-        self.unsecurified_factor_instances
-            .iter()
-            .map(|f| AccountAddress::new(f.clone(), self.network_id))
-            .collect()
-    }
-    pub fn account_addresses_of_securified(&self) -> IndexSet<AccountAddress> {
-        self.securified_factor_instances
-            .iter()
-            .map(|f| AccountAddress::new(f.clone(), self.network_id))
-            .collect()
-    }
-    pub fn all_account_addresses(&self) -> IndexSet<AccountAddress> {
-        let mut addresses = IndexSet::new();
-        addresses.extend(self.account_addresses_of_unsecurified());
-        addresses.extend(self.account_addresses_of_securified());
-        addresses
-    }
+    // pub fn account_addresses_of_securified(&self) -> IndexSet<AccountAddress> {
+    //     self.securified_factor_instances
+    //         .iter()
+    //         .map(|f| AccountAddress::new(f.clone(), self.network_id))
+    //         .collect()
+    // }
+    // pub fn all_account_addresses(&self) -> IndexSet<AccountAddress> {
+    //     let mut addresses = IndexSet::new();
+    //     addresses.extend(self.account_addresses_of_unsecurified());
+    //     addresses.extend(self.account_addresses_of_securified());
+    //     addresses
+    // }
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
@@ -284,7 +296,7 @@ pub trait Gateway {
     fn call(&self);
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IntermediaryDerivationsAndAnalysis {
     pub derived_instances: DerivedFactorInstances,
     pub probably_free: ProbablyFreeFactorInstances,
@@ -292,7 +304,7 @@ pub struct IntermediaryDerivationsAndAnalysis {
 
 #[derive(Clone, Debug)]
 pub struct FinalDerivationsFinalAndAnalysis {
-    pub derived_accounts: DerivedAccounts,
+    pub derived_instances: DerivedFactorInstances,
     pub cache: Arc<Cache>,
 }
 
@@ -331,6 +343,19 @@ impl KeysCollector {
 pub struct UnsecurifiedAccount {
     pub address: AccountAddress,
     pub veci: FactorInstance,
+}
+impl From<UnsecurifiedAccount> for Account {
+    fn from(value: UnsecurifiedAccount) -> Self {
+        Account::Unsecurified(value)
+    }
+}
+impl UnsecurifiedAccount {
+    pub fn new(veci: FactorInstanceInUnsecurifiedSpace, network_id: NetworkID) -> Self {
+        Self {
+            address: AccountAddress::new(veci.instance(), network_id),
+            veci: veci.instance(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

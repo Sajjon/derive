@@ -100,7 +100,7 @@ pub struct MatrixOfAbstractFactor<T> {
     override_factors: Vec<T>,
 }
 pub type MatrixOfFactorSources = MatrixOfAbstractFactor<FactorSource>;
-pub type MatrixOfFactorInstances = MatrixOfAbstractFactor<FactorInstance>;
+pub type MatrixOfFactorInstances = MatrixOfAbstractFactor<FactorInstanceInSecurifiedSpace>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NetworkID {
@@ -126,6 +126,15 @@ pub enum Account {
     Securified(SecurifiedAccount),
 }
 impl Account {
+    pub fn new_unsecurified(
+        instance: FactorInstanceInUnsecurifiedSpace,
+        network_id: NetworkID,
+    ) -> Self {
+        Self::Unsecurified(UnsecurifiedAccount::new(instance, network_id))
+    }
+    pub fn set_name(&mut self, _name: impl AsRef<str>) {
+        // noop
+    }
     pub fn address(&self) -> AccountAddress {
         match self {
             Self::Unsecurified(a) => a.address.clone(),
@@ -164,6 +173,11 @@ impl Profile {
         let expected_after_insertion = count + accounts.len();
         self.accounts.extend(accounts);
         assert_eq!(self.accounts.len(), expected_after_insertion);
+        Ok(())
+    }
+
+    pub fn add_factor_source(&mut self, factor_source: FactorSource) -> Result<()> {
+        self.factor_sources.insert(factor_source);
         Ok(())
     }
 }

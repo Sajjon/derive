@@ -1,27 +1,9 @@
 #![allow(unused)]
 #![allow(unused_variables)]
 
-use crate::prelude::*;
+use std::net;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum FactorSourceSelector {
-    NewOfKind(FactorSourceKind),
-    Specific(FactorSourceIDFromHash),
-}
-impl FactorSourceSelector {
-    fn matches_derivation_path(&self, path: DerivationPath) -> bool {
-        match self {
-            Self::NewOfKind(kind) => path.factor_source_id().factor_source_kind == *kind,
-            Self::Specific(id) => path.factor_source_id() == *id,
-        }
-    }
-    fn factor_source_kind(&self) -> FactorSourceKind {
-        match self {
-            Self::NewOfKind(kind) => kind.clone(),
-            Self::Specific(id) => id.factor_source_kind,
-        }
-    }
-}
+use crate::prelude::*;
 
 pub enum PolyDeriveRequestKind {
     /// Onboarding Account Recovery Scan
@@ -35,10 +17,8 @@ pub enum PolyDeriveRequestKind {
         network_id: NetworkID,
     },
 
-    /// Add new FactorSource
-    PreDeriveInstancesForNewFactorSource {
-        factor_source_kind: FactorSourceKind,
-    },
+    /// PreDerive FactorInstances for new FactorSource
+    PreDeriveInstancesForNewFactorSource { factor_source: FactorSource },
 
     /// New Virtual Unsecurified Account
     NewVirtualUnsecurifiedAccount {
@@ -63,7 +43,7 @@ pub enum PolyDeriveRequestKind {
 /// factor source selector.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 struct FactorInstancesCacheCursors {
-    map: IndexMap<FactorSourceSelector, HDPathValue>,
+    map: IndexMap<FactorSourceIDFromHash, HDPathValue>,
 }
 
 pub struct PolyDerivation {
@@ -152,7 +132,7 @@ impl PolyDerivation {
     }
 
     pub fn pre_derive_instance_for_new_factor_source(
-        factor_source_kind: &FactorSourceKind,
+        factor_source: &FactorSource,
         gateway: impl Into<Option<Arc<dyn Gateway>>>,
         cache: impl Into<Option<Arc<Cache>>>,
         profile: Arc<Profile>,
@@ -160,15 +140,13 @@ impl PolyDerivation {
     ) -> Self {
         Self::new(
             PolyDeriveRequestKind::PreDeriveInstancesForNewFactorSource {
-                factor_source_kind: factor_source_kind.clone(),
+                factor_source: factor_source.clone(),
             },
             cache,
             OnChainAnalyzer::new(gateway),
             ProfileAnalyzer::with_profile(profile),
             derivation_interactors,
-            Arc::new(WhenDerivedInstancesForFactorSource {
-                factor_source_selector: FactorSourceSelector::NewOfKind(factor_source_kind.clone()),
-            }),
+            Arc::new(YesDone),
         )
     }
 
@@ -189,15 +167,7 @@ impl PolyDerivation {
             OnChainAnalyzer::new(gateway),
             ProfileAnalyzer::with_profile(profile),
             derivation_interactors,
-            Arc::new(WhenMatchingSingle {
-                request: DerivationRequestInKeySpace::new(
-                    factor_source.factor_source_id.clone(),
-                    network_id,
-                    CAP26EntityKind::Account,
-                    CAP26KeyKind::T9n,
-                    KeySpace::Unsecurified,
-                ),
-            }),
+            Arc::new(YesDone),
         )
     }
 
@@ -229,71 +199,26 @@ impl PolyDerivation {
             OnChainAnalyzer::new(gateway),
             ProfileAnalyzer::with_profile(profile),
             derivation_interactors,
-            Arc::new(WhenMatchingSingle {
-                request: DerivationRequestInKeySpace::new(
-                    factor_source.factor_source_id.clone(),
-                    network_id,
-                    CAP26EntityKind::Account,
-                    CAP26KeyKind::T9n,
-                    KeySpace::Unsecurified,
-                ),
-            }),
+            Arc::new(YesDone),
         )
     }
 }
 
 #[async_trait]
 pub trait IsDerivationDoneQuery {
-    async fn is_done(&self, derived_accounts: &DerivedAccounts) -> Result<bool>;
-}
-pub struct WhenMatchingSingle {
-    pub request: DerivationRequestInKeySpace,
-}
-#[async_trait]
-impl IsDerivationDoneQuery for WhenMatchingSingle {
-    async fn is_done(&self, derived_accounts: &DerivedAccounts) -> Result<bool> {
-        if derived_accounts
-            .unsecurified_accounts
-            .iter()
-            .any(|a| a.veci.derivation_in_key_space() == self.request)
-        {
-            return Ok(true);
-        } else {
-            return Ok(false);
-        }
-    }
+    async fn is_done(&self, derived_accounts: &DerivedFactorInstances) -> Result<bool>;
 }
 
-pub struct WhenDerivedInstancesForFactorSource {
-    pub factor_source_selector: FactorSourceSelector,
-}
+pub struct YesDone;
 #[async_trait]
-impl IsDerivationDoneQuery for WhenDerivedInstancesForFactorSource {
-    async fn is_done(&self, derived_accounts: &DerivedAccounts) -> Result<bool> {
-        let expected_count = self
-            .factor_source_selector
-            .factor_source_kind()
-            .derivation_batch_size();
-        if derived_accounts
-            .unsecurified_accounts
-            .iter()
-            .filter(|a| {
-                self.factor_source_selector
-                    .matches_derivation_path(a.0.derivation_path())
-            })
-            .collect_vec()
-            .len()
-            >= expected_count
-        {
-            return Ok(true);
-        } else {
-            return Ok(false);
-        }
+impl IsDerivationDoneQuery for YesDone {
+    async fn is_done(&self, derived_accounts: &DerivedFactorInstances) -> Result<bool> {
+        Ok(true)
     }
 }
 
 impl PolyDerivation {
-    async fn is_done(&self, derived_accounts: &DerivedAccounts) -> Result<bool> {
+    async fn is_done(&self, derived_accounts: &DerivedFactorInstances) -> Result<bool> {
         self.is_derivation_done_query
             .is_done(derived_accounts)
             .await
@@ -309,25 +234,25 @@ impl PolyDerivation {
         todo!()
     }
 
-    fn derived_accounts(&self) -> DerivedAccounts {
+    fn derived_instances(&self) -> DerivedFactorInstances {
         // self.cache.recovered_accounts()
         todo!()
     }
 
     pub async fn poly_derive(self) -> Result<FinalDerivationsFinalAndAnalysis> {
         loop {
-            let is_done = self.is_done(&self.derived_accounts()).await?;
+            let is_done = self.is_done(&&self.derived_instances()).await?;
             if is_done {
                 break;
             }
             self.derive_more().await?;
         }
 
-        let derived_accounts = self.derived_accounts();
+        let derived_instances = self.derived_instances();
         let cache = self.cache;
 
         let analysis = FinalDerivationsFinalAndAnalysis {
-            derived_accounts,
+            derived_instances,
             cache,
         };
 
@@ -342,6 +267,8 @@ pub async fn oars(
     gateway: Arc<dyn Gateway>,
     is_derivation_done_query: Arc<dyn IsDerivationDoneQuery>,
 ) -> Result<(Profile, Arc<Cache>)> {
+    let network_id = NetworkID::Mainnet;
+
     let derivation = PolyDerivation::oars(
         &factor_sources,
         gateway,
@@ -351,8 +278,12 @@ pub async fn oars(
 
     let analysis = derivation.poly_derive().await?;
     let cache = analysis.cache;
-    let accounts = analysis.derived_accounts.all_accounts();
-    let profile = Profile::new(factor_sources, accounts);
+
+    let recovered_unsecurified_accounts =
+        analysis.derived_instances.accounts_unsecurified(network_id);
+
+    // TODO handle securified!
+    let profile = Profile::new(factor_sources, recovered_unsecurified_accounts);
 
     Ok((profile, cache))
 }
@@ -365,6 +296,7 @@ pub async fn mars(
     cache: impl Into<Option<Arc<Cache>>>,
     is_derivation_done_query: Arc<dyn IsDerivationDoneQuery>,
 ) -> Result<Arc<Cache>> {
+    let network_id = profile.current_network();
     let derivation = PolyDerivation::mars(
         &factor_source,
         gateway,
@@ -376,9 +308,67 @@ pub async fn mars(
 
     let analysis = derivation.poly_derive().await?;
     let cache = analysis.cache;
-    let accounts = analysis.derived_accounts.all_accounts();
+    let accounts = analysis.derived_instances.accounts_unsecurified(network_id);
 
     profile.insert_accounts(accounts)?;
 
     Ok(cache)
+}
+
+pub async fn pre_derive_instance_for_new_factor_source(
+    factor_source: &FactorSource, // not yet added to Profile.
+    gateway: impl Into<Option<Arc<dyn Gateway>>>,
+    cache: impl Into<Option<Arc<Cache>>>,
+    profile: &mut Profile,
+    derivation_interactors: Arc<dyn DerivationInteractors>,
+) -> Result<Arc<Cache>> {
+    let network_id = profile.current_network();
+    let derivation = PolyDerivation::pre_derive_instance_for_new_factor_source(
+        factor_source,
+        gateway,
+        cache,
+        Arc::new(profile.clone()),
+        derivation_interactors,
+    );
+
+    let analysis = derivation.poly_derive().await?;
+    let cache = analysis.cache;
+    profile.add_factor_source(factor_source.clone())?;
+
+    Ok(cache)
+}
+
+pub async fn new_virtual_unsecurified_account(
+    name: impl AsRef<str>,
+    network_id: NetworkID,
+    factor_source: &FactorSource,
+    gateway: impl Into<Option<Arc<dyn Gateway>>>,
+    cache: impl Into<Option<Arc<Cache>>>,
+    profile: &mut Profile,
+    derivation_interactors: Arc<dyn DerivationInteractors>,
+) -> Result<Account> {
+    let network_id = profile.current_network();
+    let derivation = PolyDerivation::new_virtual_unsecurified_account(
+        network_id,
+        factor_source,
+        gateway,
+        cache,
+        Arc::new(profile.clone()),
+        derivation_interactors,
+    );
+
+    let analysis = derivation.poly_derive().await?;
+
+    let mut account = analysis
+        .derived_instances
+        .accounts_unsecurified(network_id)
+        .first()
+        .ok_or_else(|| "No account".to_owned())
+        .cloned()?;
+
+    account.set_name(name);
+
+    profile.insert_accounts(IndexSet::from_iter([account.clone()]))?;
+
+    Ok(account)
 }
