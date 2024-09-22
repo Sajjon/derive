@@ -7,6 +7,12 @@ pub struct FactorSource {
     pub factor_source_id: FactorSourceIDFromHash,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FactorSourceKind {
+    Device,
+    Ledger,
+}
+
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FactorSourceIDFromHash(pub Uuid);
 
@@ -26,6 +32,15 @@ impl FactorInstance {
         self.factor_source_id.clone()
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MatrixOfAbstractFactor<T> {
+    threshold_factors: Vec<T>,
+    threshold: usize,
+    override_factors: Vec<T>,
+}
+pub type MatrixOfFactorSources = MatrixOfAbstractFactor<FactorSource>;
+pub type MatrixOfFactorInstances = MatrixOfAbstractFactor<FactorInstance>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NetworkID {
@@ -62,5 +77,15 @@ impl Profile {
             factor_sources,
             accounts,
         }
+    }
+    pub fn current_network(&self) -> NetworkID {
+        NetworkID::Mainnet
+    }
+    pub fn insert_accounts(&mut self, accounts: IndexSet<Account>) -> Result<()> {
+        let count = self.accounts.len();
+        let expected_after_insertion = count + accounts.len();
+        self.accounts.extend(accounts);
+        assert_eq!(self.accounts.len(), expected_after_insertion);
+        Ok(())
     }
 }
