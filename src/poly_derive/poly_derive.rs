@@ -8,6 +8,20 @@ pub enum FactorSourceSelector {
     NewOfKind(FactorSourceKind),
     Specific(FactorSourceIDFromHash),
 }
+impl FactorSourceSelector {
+    fn matches_derivation_path(&self, path: DerivationPath) -> bool {
+        match self {
+            Self::NewOfKind(kind) => path.factor_source_id().factor_source_kind == *kind,
+            Self::Specific(id) => path.factor_source_id() == *id,
+        }
+    }
+    fn factor_source_kind(&self) -> FactorSourceKind {
+        match self {
+            Self::NewOfKind(kind) => kind.clone(),
+            Self::Specific(id) => id.factor_source_kind,
+        }
+    }
+}
 
 pub enum PolyDeriveRequestKind {
     /// Onboarding Account Recovery Scan
@@ -19,6 +33,11 @@ pub enum PolyDeriveRequestKind {
     MARS {
         factor_source: FactorSource,
         network_id: NetworkID,
+    },
+
+    /// Add new FactorSource
+    PreDeriveInstancesForNewFactorSource {
+        factor_source_kind: FactorSourceKind,
     },
 
     /// New Virtual Unsecurified Account
@@ -37,11 +56,6 @@ pub enum PolyDeriveRequestKind {
     UpdateSecurifiedAccount {
         securified_account: SecurifiedAccount,
         matrix_of_factor_sources: MatrixOfFactorSources,
-    },
-
-    /// Add new FactorSource
-    PreDeriveInstancesForNewFactorSource {
-        factor_source_kind: FactorSourceKind,
     },
 }
 
@@ -136,11 +150,146 @@ impl PolyDerivation {
             is_derivation_done_query,
         )
     }
+
+    pub fn pre_derive_instance_for_new_factor_source(
+        factor_source_kind: &FactorSourceKind,
+        gateway: impl Into<Option<Arc<dyn Gateway>>>,
+        cache: impl Into<Option<Arc<Cache>>>,
+        profile: Arc<Profile>,
+        derivation_interactors: Arc<dyn DerivationInteractors>,
+    ) -> Self {
+        Self::new(
+            PolyDeriveRequestKind::PreDeriveInstancesForNewFactorSource {
+                factor_source_kind: factor_source_kind.clone(),
+            },
+            cache,
+            OnChainAnalyzer::new(gateway),
+            ProfileAnalyzer::with_profile(profile),
+            derivation_interactors,
+            Arc::new(WhenDerivedInstancesForFactorSource {
+                factor_source_selector: FactorSourceSelector::NewOfKind(factor_source_kind.clone()),
+            }),
+        )
+    }
+
+    pub fn new_virtual_unsecurified_account(
+        network_id: NetworkID,
+        factor_source: &FactorSource,
+        gateway: impl Into<Option<Arc<dyn Gateway>>>,
+        cache: impl Into<Option<Arc<Cache>>>,
+        profile: Arc<Profile>,
+        derivation_interactors: Arc<dyn DerivationInteractors>,
+    ) -> Self {
+        Self::new(
+            PolyDeriveRequestKind::NewVirtualUnsecurifiedAccount {
+                network_id,
+                factor_source: factor_source.clone(),
+            },
+            cache,
+            OnChainAnalyzer::new(gateway),
+            ProfileAnalyzer::with_profile(profile),
+            derivation_interactors,
+            Arc::new(WhenMatchingSingle {
+                request: DerivationRequestInKeySpace::new(
+                    factor_source.factor_source_id.clone(),
+                    network_id,
+                    CAP26EntityKind::Account,
+                    CAP26KeyKind::T9n,
+                    KeySpace::Unsecurified,
+                ),
+            }),
+        )
+    }
+
+    /// Securify unsecurified Account
+    pub fn securify_unsecurified_account(
+        account_address: AccountAddress,
+        matrix_of_factor_sources: MatrixOfFactorSources,
+        gateway: impl Into<Option<Arc<dyn Gateway>>>,
+        cache: impl Into<Option<Arc<Cache>>>,
+        profile: Arc<Profile>,
+        derivation_interactors: Arc<dyn DerivationInteractors>,
+    ) -> Self {
+        let unsecurified_account = profile
+            .get_account(&account_address)
+            .unwrap()
+            .as_unsecurified()
+            .unwrap()
+            .clone();
+        //     unsecurified_account: UnsecurifiedAccount,
+        //     matrix_of_factor_sources: MatrixOfFactorSources,
+        // },
+
+        Self::new(
+            PolyDeriveRequestKind::SecurifyUnsecurifiedAccount {
+                unsecurified_account,
+                matrix_of_factor_sources,
+            },
+            cache,
+            OnChainAnalyzer::new(gateway),
+            ProfileAnalyzer::with_profile(profile),
+            derivation_interactors,
+            Arc::new(WhenMatchingSingle {
+                request: DerivationRequestInKeySpace::new(
+                    factor_source.factor_source_id.clone(),
+                    network_id,
+                    CAP26EntityKind::Account,
+                    CAP26KeyKind::T9n,
+                    KeySpace::Unsecurified,
+                ),
+            }),
+        )
+    }
 }
 
 #[async_trait]
 pub trait IsDerivationDoneQuery {
     async fn is_done(&self, derived_accounts: &DerivedAccounts) -> Result<bool>;
+}
+pub struct WhenMatchingSingle {
+    pub request: DerivationRequestInKeySpace,
+}
+#[async_trait]
+impl IsDerivationDoneQuery for WhenMatchingSingle {
+    async fn is_done(&self, derived_accounts: &DerivedAccounts) -> Result<bool> {
+        if derived_accounts
+            .unsecurified_accounts
+            .iter()
+            .any(|a| a.veci.derivation_in_key_space() == self.request)
+        {
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
+    }
+}
+
+pub struct WhenDerivedInstancesForFactorSource {
+    pub factor_source_selector: FactorSourceSelector,
+}
+#[async_trait]
+impl IsDerivationDoneQuery for WhenDerivedInstancesForFactorSource {
+    async fn is_done(&self, derived_accounts: &DerivedAccounts) -> Result<bool> {
+        let expected_count = self
+            .factor_source_selector
+            .factor_source_kind()
+            .derivation_batch_size();
+        if derived_accounts
+            .unsecurified_accounts
+            .iter()
+            .filter(|a| {
+                self.factor_source_selector
+                    .matches_derivation_path(a.0.derivation_path())
+            })
+            .collect_vec()
+            .len()
+            >= expected_count
+        {
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
+    }
 }
 
 impl PolyDerivation {

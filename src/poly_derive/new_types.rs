@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum KeySpace {
     Unsecurified,
     Securified,
@@ -58,7 +58,10 @@ impl<T> DerivationPathAbstractIndex<T> {
 
 pub type DerivationRequestInKeySpace = DerivationPathAbstractIndex<KeySpace>;
 impl DerivationRequestInKeySpace {
-    fn new(
+    pub fn key_space(&self) -> KeySpace {
+        self.abstract_index
+    }
+    pub fn new(
         factor_source_id: FactorSourceIDFromHash,
         network_id: NetworkID,
         entity_kind: CAP26EntityKind,
@@ -118,25 +121,76 @@ impl FactorSources {
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct DerivedAccounts {
-    pub unsecurified_accounts: IndexSet<UnsecurifiedAccount>,
-    pub securified_accounts: IndexSet<SecurifiedAccount>,
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FactorInstanceInUnsecurifiedSpace {
+    factor_instance: FactorInstance,
 }
-impl DerivedAccounts {
-    pub fn all_accounts(&self) -> IndexSet<Account> {
-        let mut accounts = IndexSet::new();
-        accounts.extend(
-            self.unsecurified_accounts
-                .iter()
-                .map(|a| Account::Unsecurified(a.clone())),
-        );
-        accounts.extend(
-            self.securified_accounts
-                .iter()
-                .map(|a| Account::Securified(a.clone())),
-        );
-        accounts
+impl From<FactorInstanceInUnsecurifiedSpace> for FactorInstance {
+    fn from(value: FactorInstanceInUnsecurifiedSpace) -> Self {
+        value.instance()
+    }
+}
+impl FactorInstanceInUnsecurifiedSpace {
+    /// # Panics
+    /// Panics if it is not in unsecurified space
+    pub fn new(factor_instance: FactorInstance) -> Self {
+        assert_eq!(factor_instance.key_space(), KeySpace::Unsecurified);
+        Self { factor_instance }
+    }
+    pub fn instance(&self) -> FactorInstance {
+        self.factor_instance.clone()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FactorInstanceInSecurifiedSpace {
+    factor_instance: FactorInstance,
+}
+impl From<FactorInstanceInSecurifiedSpace> for FactorInstance {
+    fn from(value: FactorInstanceInSecurifiedSpace) -> Self {
+        value.instance()
+    }
+}
+impl FactorInstanceInSecurifiedSpace {
+    /// # Panics
+    /// Panics if it is not in securified space
+    pub fn new(factor_instance: FactorInstance) -> Self {
+        assert_eq!(factor_instance.key_space(), KeySpace::Securified);
+        Self { factor_instance }
+    }
+    pub fn instance(&self) -> FactorInstance {
+        self.factor_instance.clone()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedFactorInstances {
+    pub network_id: NetworkID,
+    unsecurified_factor_instances: IndexSet<FactorInstanceInUnsecurifiedSpace>,
+    securified_factor_instances: IndexSet<FactorInstanceInSecurifiedSpace>,
+}
+impl DerivedFactorInstances {
+    pub fn unsecurified_factor_instances(&self) -> IndexSet<FactorInstanceInUnsecurifiedSpace> {
+        self.unsecurified_factor_instances.clone()
+    }
+
+    pub fn account_addresses_of_unsecurified(&self) -> IndexSet<AccountAddress> {
+        self.unsecurified_factor_instances
+            .iter()
+            .map(|f| AccountAddress::new(f.clone(), self.network_id))
+            .collect()
+    }
+    pub fn account_addresses_of_securified(&self) -> IndexSet<AccountAddress> {
+        self.securified_factor_instances
+            .iter()
+            .map(|f| AccountAddress::new(f.clone(), self.network_id))
+            .collect()
+    }
+    pub fn all_account_addresses(&self) -> IndexSet<AccountAddress> {
+        let mut addresses = IndexSet::new();
+        addresses.extend(self.account_addresses_of_unsecurified());
+        addresses.extend(self.account_addresses_of_securified());
+        addresses
     }
 }
 
@@ -150,13 +204,18 @@ impl FactorInstances {
         Self(iter.into_iter().collect())
     }
 }
+impl FromIterator<FactorInstance> for FactorInstances {
+    fn from_iter<T: IntoIterator<Item = FactorInstance>>(iter: T) -> Self {
+        Self::from(iter)
+    }
+}
 
 #[derive(Default, Clone)]
 pub struct OnChainAnalyzer {
     gateway: Option<Arc<dyn Gateway>>,
 }
 impl OnChainAnalyzer {
-    fn new(gateway: impl Into<Option<Arc<dyn Gateway>>>) -> Self {
+    pub fn new(gateway: impl Into<Option<Arc<dyn Gateway>>>) -> Self {
         Self {
             gateway: gateway.into(),
         }
@@ -227,7 +286,7 @@ pub trait Gateway {
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct IntermediaryDerivationsAndAnalysis {
-    pub derived_accounts: DerivedAccounts,
+    pub derived_instances: DerivedFactorInstances,
     pub probably_free: ProbablyFreeFactorInstances,
 }
 
@@ -269,7 +328,14 @@ impl KeysCollector {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct UnsecurifiedAccount(pub FactorInstance);
+pub struct UnsecurifiedAccount {
+    pub address: AccountAddress,
+    pub veci: FactorInstance,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SecurifiedAccount(pub Vec<FactorInstance>);
+pub struct SecurifiedAccount {
+    pub address: AccountAddress,
+    pub veci: Option<FactorInstance>,
+    pub matrix: MatrixOfFactorInstances,
+}

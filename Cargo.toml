@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.82"
+enum-as-inner = "0.6.1"
+hex = "0.4.3"
 indexmap = "2.5.0"
 itertools = "0.13.0"
+sha256 = { version = "1.5.0", default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
