@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = "0.1.82"
 indexmap = "2.5.0"
 itertools = "0.13.0"
 uuid = { version = "1.10.0", features = ["v4"] }

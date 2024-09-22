@@ -12,11 +12,11 @@ impl FactorSources {
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct KnownTakenFactorInstances {
+pub struct RecoveredAccounts {
     pub recovered_unsecurified_accounts: IndexSet<UnsecurifiedAccount>,
     pub recovered_securified_accounts: IndexSet<SecurifiedAccount>,
 }
-impl KnownTakenFactorInstances {
+impl RecoveredAccounts {
     pub fn recovered_accounts(&self) -> IndexSet<Account> {
         let mut accounts = IndexSet::new();
         accounts.extend(
@@ -120,13 +120,13 @@ pub trait Gateway {
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct IntermediaryDerivationsAndAnalysis {
-    pub known_taken: KnownTakenFactorInstances,
+    pub recovered_accounts: RecoveredAccounts,
     pub probably_free: ProbablyFreeFactorInstances,
 }
 
 #[derive(Clone, Debug)]
 pub struct FinalDerivationsFinalAndAnalysis {
-    pub recovered_accounts: IndexSet<Account>,
+    pub recovered_accounts: RecoveredAccounts,
     pub cache: Arc<Cache>,
 }
 
@@ -186,8 +186,9 @@ pub struct PolyDerivation {
     /// If not present (no Profile) a dummy one is used which says everything is free.
     profile_analyser: ProfileAnalyzer,
 
-    /// GUI hook
+    /// GUI hooks
     derivation_interactors: Arc<dyn DerivationInteractors>,
+    is_derivation_done_query: Arc<dyn IsDerivationDoneQuery>,
 }
 
 impl PolyDerivation {
@@ -199,6 +200,7 @@ impl PolyDerivation {
         maybe_onchain_analyser: impl Into<Option<OnChainAnalyzer>>,
         maybe_profile_analyser: impl Into<Option<ProfileAnalyzer>>,
         derivation_interactors: Arc<dyn DerivationInteractors>,
+        is_derivation_done_query: Arc<dyn IsDerivationDoneQuery>,
     ) -> Self {
         let maybe_cache = maybe_cache.into();
         let maybe_onchain_analyser = maybe_onchain_analyser.into();
@@ -217,6 +219,7 @@ impl PolyDerivation {
             onchain_analyser: maybe_onchain_analyser.unwrap_or_else(OnChainAnalyzer::dummy),
             profile_analyser: maybe_profile_analyser.unwrap_or_else(ProfileAnalyzer::dummy),
             derivation_interactors,
+            is_derivation_done_query,
         }
     }
 
@@ -224,6 +227,7 @@ impl PolyDerivation {
         factor_sources: &FactorSources,
         gateway: Arc<dyn Gateway>,
         derivation_interactors: Arc<dyn DerivationInteractors>,
+        is_derivation_done_query: Arc<dyn IsDerivationDoneQuery>,
     ) -> Self {
         Self::new(
             NetworkID::Mainnet,
@@ -233,8 +237,14 @@ impl PolyDerivation {
             OnChainAnalyzer::new(gateway),
             None,
             derivation_interactors,
+            is_derivation_done_query,
         )
     }
+}
+
+#[async_trait]
+pub trait IsDerivationDoneQuery {
+    async fn is_done(&self, recovered_accounts: &RecoveredAccounts) -> Result<bool>;
 }
 
 impl PolyDerivation {
@@ -245,21 +255,23 @@ impl PolyDerivation {
         Ok(())
     }
 
-    async fn is_done(&self, analysis: &IntermediaryDerivationsAndAnalysis) -> Result<bool> {
-        Ok(false)
+    async fn is_done(&self, recovered_accounts: &RecoveredAccounts) -> Result<bool> {
+        self.is_derivation_done_query
+            .is_done(recovered_accounts)
+            .await
     }
 
     pub async fn poly_derive(self) -> Result<FinalDerivationsFinalAndAnalysis> {
         let mut analysis = self.initial_analysis().await?;
         loop {
-            let is_done = self.is_done(&analysis).await?;
+            let is_done = self.is_done(&analysis.recovered_accounts).await?;
             if is_done {
                 break;
             }
             self.next_analysis(&mut analysis).await?;
         }
         Ok(FinalDerivationsFinalAndAnalysis {
-            recovered_accounts: analysis.known_taken.recovered_accounts(),
+            recovered_accounts: analysis.recovered_accounts,
             cache: self.cache,
         })
     }
@@ -270,12 +282,18 @@ pub async fn oars(
     factor_sources: FactorSources,
     interactors: Arc<dyn DerivationInteractors>,
     gateway: Arc<dyn Gateway>,
+    is_derivation_done_query: Arc<dyn IsDerivationDoneQuery>,
 ) -> Result<(Profile, Arc<Cache>)> {
-    let derivation = PolyDerivation::oars(&factor_sources, gateway, interactors);
+    let derivation = PolyDerivation::oars(
+        &factor_sources,
+        gateway,
+        interactors,
+        is_derivation_done_query,
+    );
 
     let analysis = derivation.poly_derive().await?;
     let cache = analysis.cache;
-    let accounts = analysis.recovered_accounts;
+    let accounts = analysis.recovered_accounts.recovered_accounts();
     let profile = Profile::new(factor_sources, accounts);
 
     Ok((profile, cache))

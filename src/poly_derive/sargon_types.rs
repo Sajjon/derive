@@ -8,7 +8,7 @@ pub struct FactorSource {
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FactorSourceIDFromHash(pub uuid::Uuid);
+pub struct FactorSourceIDFromHash(pub Uuid);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FactorInstance {
