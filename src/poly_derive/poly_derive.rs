@@ -38,23 +38,75 @@ pub struct ProbablyFreeFactorInstances(pub IndexSet<FactorInstance>);
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct FactorInstances(pub IndexSet<FactorInstance>);
-
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct OnChainAnalyzer;
-impl OnChainAnalyzer {
-    pub fn new(gateway: Arc<dyn Gateway>) -> Self {
-        Self
+impl FactorInstances {
+    pub fn from(iter: impl IntoIterator<Item = FactorInstance>) -> Self {
+        Self(iter.into_iter().collect())
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ProfileAnalyzer;
+#[derive(Default, Clone)]
+pub struct OnChainAnalyzer {
+    gateway: Option<Arc<dyn Gateway>>,
+}
+impl OnChainAnalyzer {
+    fn new(gateway: impl Into<Option<Arc<dyn Gateway>>>) -> Self {
+        Self {
+            gateway: gateway.into(),
+        }
+    }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Cache;
+    pub fn with_gateway(gateway: Arc<dyn Gateway>) -> Self {
+        Self::new(gateway)
+    }
+
+    pub fn dummy() -> Self {
+        Self::new(None)
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct ProfileAnalyzer {
+    profile: Option<Arc<Profile>>,
+}
+impl ProfileAnalyzer {
+    fn new(profile: impl Into<Option<Arc<Profile>>>) -> Self {
+        Self {
+            profile: profile.into(),
+        }
+    }
+
+    pub fn with_profile(profile: Arc<Profile>) -> Self {
+        Self::new(profile)
+    }
+
+    pub fn dummy() -> Self {
+        Self::new(None)
+    }
+}
+
+#[derive(Debug)]
+pub struct Cache {
+    factor_instances_for_requests: RwLock<IndexMap<DerivationRequestInKeySpace, FactorInstances>>,
+}
 impl Cache {
+    fn with_map(map: IndexMap<DerivationRequestInKeySpace, FactorInstances>) -> Self {
+        Self {
+            factor_instances_for_requests: RwLock::new(map),
+        }
+    }
     pub fn new(probably_free_factor_instances: ProbablyFreeFactorInstances) -> Self {
-        Self
+        let map = probably_free_factor_instances
+            .0
+            .into_iter()
+            .into_group_map_by(|x| x.derivation_in_key_space())
+            .into_iter()
+            .map(|(k, v)| (k, FactorInstances::from(v)))
+            .collect::<IndexMap<DerivationRequestInKeySpace, FactorInstances>>();
+
+        Self::with_map(map)
+    }
+    pub fn empty() -> Self {
+        Self::with_map(IndexMap::default())
     }
 }
 
@@ -67,9 +119,15 @@ pub trait Gateway {
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct DerivationsAndAnalysis {
+pub struct IntermediaryDerivationsAndAnalysis {
     pub known_taken: KnownTakenFactorInstances,
     pub probably_free: ProbablyFreeFactorInstances,
+}
+
+#[derive(Clone, Debug)]
+pub struct FinalDerivationsFinalAndAnalysis {
+    pub recovered_accounts: IndexSet<Account>,
+    pub cache: Arc<Cache>,
 }
 
 pub type HDPathValue = u32;
@@ -113,22 +171,31 @@ pub enum PolyDeriveRequestKind {
     OARS,
 }
 
-pub struct PolyDeriveInput {
+pub struct PolyDerivation {
     network_id: NetworkID,
     factor_sources: FactorSources,
     request_kind: PolyDeriveRequestKind,
-    maybe_cache: Option<Cache>,
-    maybe_onchain_analyser: Option<OnChainAnalyzer>,
-    maybe_profile_analyser: Option<ProfileAnalyzer>,
+
+    /// If no cache present, a new one is created and will be filled.
+    cache: Arc<Cache>,
+
+    /// If not present (no Gateway) or if offline, a "dummy" one is used
+    /// which says everything is free.
+    onchain_analyser: OnChainAnalyzer,
+
+    /// If not present (no Profile) a dummy one is used which says everything is free.
+    profile_analyser: ProfileAnalyzer,
+
+    /// GUI hook
     derivation_interactors: Arc<dyn DerivationInteractors>,
 }
 
-impl PolyDeriveInput {
+impl PolyDerivation {
     fn new(
         network_id: NetworkID,
         factor_sources: FactorSources,
         request_kind: PolyDeriveRequestKind,
-        maybe_cache: impl Into<Option<Cache>>,
+        maybe_cache: impl Into<Option<Arc<Cache>>>,
         maybe_onchain_analyser: impl Into<Option<OnChainAnalyzer>>,
         maybe_profile_analyser: impl Into<Option<ProfileAnalyzer>>,
         derivation_interactors: Arc<dyn DerivationInteractors>,
@@ -146,21 +213,21 @@ impl PolyDeriveInput {
             network_id,
             factor_sources,
             request_kind,
-            maybe_cache,
-            maybe_onchain_analyser,
-            maybe_profile_analyser,
+            cache: maybe_cache.unwrap_or_else(|| Arc::new(Cache::empty())),
+            onchain_analyser: maybe_onchain_analyser.unwrap_or_else(OnChainAnalyzer::dummy),
+            profile_analyser: maybe_profile_analyser.unwrap_or_else(ProfileAnalyzer::dummy),
             derivation_interactors,
         }
     }
 
     pub fn oars(
-        factor_sources: FactorSources,
+        factor_sources: &FactorSources,
         gateway: Arc<dyn Gateway>,
         derivation_interactors: Arc<dyn DerivationInteractors>,
     ) -> Self {
         Self::new(
             NetworkID::Mainnet,
-            factor_sources,
+            factor_sources.clone(),
             PolyDeriveRequestKind::OARS,
             None,
             OnChainAnalyzer::new(gateway),
@@ -170,32 +237,45 @@ impl PolyDeriveInput {
     }
 }
 
-async fn _poly_derive(input: PolyDeriveInput) -> Result<DerivationsAndAnalysis> {
-    // let mut instances = FactorInstances::default();
-    // let indices = ...;
-    // let requests = partial_derivation_request.materialize(indices);
-    // if let Some(ref cache) = maybe_cache {
-    //     let cached = cache.load(&requests).await?;
-    // }
+impl PolyDerivation {
+    async fn initial_analysis(&self) -> Result<IntermediaryDerivationsAndAnalysis> {
+        Ok(IntermediaryDerivationsAndAnalysis::default())
+    }
+    async fn next_analysis(&self, analysis: &mut IntermediaryDerivationsAndAnalysis) -> Result<()> {
+        Ok(())
+    }
 
-    Ok(DerivationsAndAnalysis::default())
+    async fn is_done(&self, analysis: &IntermediaryDerivationsAndAnalysis) -> Result<bool> {
+        Ok(false)
+    }
+
+    pub async fn poly_derive(self) -> Result<FinalDerivationsFinalAndAnalysis> {
+        let mut analysis = self.initial_analysis().await?;
+        loop {
+            let is_done = self.is_done(&analysis).await?;
+            if is_done {
+                break;
+            }
+            self.next_analysis(&mut analysis).await?;
+        }
+        Ok(FinalDerivationsFinalAndAnalysis {
+            recovered_accounts: analysis.known_taken.recovered_accounts(),
+            cache: self.cache,
+        })
+    }
 }
 
 /// onboarding account recover scan
 pub async fn oars(
     factor_sources: FactorSources,
-    derivation_interactors: Arc<dyn DerivationInteractors>,
+    interactors: Arc<dyn DerivationInteractors>,
     gateway: Arc<dyn Gateway>,
-) -> Result<(Profile, Cache)> {
-    let analysis = _poly_derive(PolyDeriveInput::oars(
-        factor_sources.clone(),
-        gateway,
-        derivation_interactors,
-    ))
-    .await?;
+) -> Result<(Profile, Arc<Cache>)> {
+    let derivation = PolyDerivation::oars(&factor_sources, gateway, interactors);
 
-    let cache = Cache::new(analysis.probably_free);
-    let accounts = analysis.known_taken.recovered_accounts();
+    let analysis = derivation.poly_derive().await?;
+    let cache = analysis.cache;
+    let accounts = analysis.recovered_accounts;
     let profile = Profile::new(factor_sources, accounts);
 
     Ok((profile, cache))

@@ -14,6 +14,23 @@ pub struct DerivationRequestAbstractFactorAbstractIndex<T, U> {
     pub key_kind: CAP26KeyKind,
     abstract_index: U,
 }
+impl<T, U> DerivationRequestAbstractFactorAbstractIndex<T, U> {
+    fn abstract_abstract_new(
+        abstract_factor: T,
+        network_id: NetworkID,
+        entity_kind: CAP26EntityKind,
+        key_kind: CAP26KeyKind,
+        abstract_index: U,
+    ) -> Self {
+        Self {
+            abstract_factor,
+            network_id,
+            entity_kind,
+            key_kind,
+            abstract_index,
+        }
+    }
+}
 
 pub type DerivationPathAbstractIndex<U> =
     DerivationRequestAbstractFactorAbstractIndex<FactorSourceIDFromHash, U>;
@@ -22,10 +39,55 @@ impl<T> DerivationPathAbstractIndex<T> {
     pub fn factor_source_id(&self) -> FactorSourceIDFromHash {
         self.abstract_factor.clone()
     }
+
+    fn new_with_factor_source_id(
+        factor_source_id: FactorSourceIDFromHash,
+        network_id: NetworkID,
+        entity_kind: CAP26EntityKind,
+        key_kind: CAP26KeyKind,
+        abstract_index: T,
+    ) -> Self {
+        Self::abstract_abstract_new(
+            factor_source_id,
+            network_id,
+            entity_kind,
+            key_kind,
+            abstract_index,
+        )
+    }
 }
 
 pub type DerivationRequestInKeySpace = DerivationPathAbstractIndex<KeySpace>;
+impl DerivationRequestInKeySpace {
+    fn new(
+        factor_source_id: FactorSourceIDFromHash,
+        network_id: NetworkID,
+        entity_kind: CAP26EntityKind,
+        key_kind: CAP26KeyKind,
+        key_space: KeySpace,
+    ) -> Self {
+        Self::new_with_factor_source_id(
+            factor_source_id,
+            network_id,
+            entity_kind,
+            key_kind,
+            key_space,
+        )
+    }
+}
+
 pub type DerivationPath = DerivationPathAbstractIndex<CAP26Index>;
+impl DerivationPath {
+    pub fn erase_to_in_key_space(&self) -> DerivationRequestInKeySpace {
+        DerivationRequestInKeySpace::new(
+            self.factor_source_id(),
+            self.network_id,
+            self.entity_kind,
+            self.key_kind,
+            self.key_space(),
+        )
+    }
+}
 
 pub type DerivationRequestWithoutFactorInKeySpace =
     DerivationRequestAbstractFactorAbstractIndex<(), KeySpace>;

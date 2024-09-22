@@ -15,20 +15,31 @@ pub struct FactorInstance {
     derivation_path: DerivationPath,
     factor_source_id: FactorSourceIDFromHash,
 }
+impl FactorInstance {
+    pub fn derivation_path(&self) -> DerivationPath {
+        self.derivation_path.clone()
+    }
+    pub fn derivation_in_key_space(&self) -> DerivationRequestInKeySpace {
+        self.derivation_path.erase_to_in_key_space()
+    }
+    pub fn factor_source_id(&self) -> FactorSourceIDFromHash {
+        self.factor_source_id.clone()
+    }
+}
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NetworkID {
     Mainnet,
     Testnet,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CAP26KeyKind {
     T9n,
     Rola,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CAP26EntityKind {
     Account,
     Identity,
