@@ -1,3 +1,5 @@
+#![feature(step_trait)]
+
 mod poly_derive;
 
 pub mod prelude {

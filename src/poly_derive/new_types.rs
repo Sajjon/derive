@@ -1,4 +1,6 @@
-use std::net;
+use std::{net, ops::Range};
+
+use __std_iter::Step;
 
 use crate::prelude::*;
 
@@ -9,34 +11,44 @@ pub enum KeySpace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct DerivationRequestAbstractFactorAbstractIndex<T, U> {
+pub struct DerivationRequestAbstractFactorAbstractIndex<T, U: KeySpaced> {
     abstract_factor: T,
     pub network_id: NetworkID,
     pub entity_kind: CAP26EntityKind,
     pub key_kind: CAP26KeyKind,
-    abstract_index: U,
+    pub key_space: KeySpace,
+    abstract_last_component: U,
 }
-impl<T, U> DerivationRequestAbstractFactorAbstractIndex<T, U> {
+pub trait KeySpaced {
+    fn is_in_key_space(&self, key_space: KeySpace) -> bool;
+}
+impl<T, U: KeySpaced> DerivationRequestAbstractFactorAbstractIndex<T, U> {
+    /// # Panics
+    /// Panics if `abstract_last_component` does not match the key space
     fn abstract_abstract_new(
         abstract_factor: T,
         network_id: NetworkID,
         entity_kind: CAP26EntityKind,
         key_kind: CAP26KeyKind,
-        abstract_index: U,
+        key_space: KeySpace,
+        abstract_last_component: U,
     ) -> Self {
+        assert!(abstract_last_component.is_in_key_space(key_space));
         Self {
             abstract_factor,
             network_id,
             entity_kind,
             key_kind,
-            abstract_index,
+            key_space,
+            abstract_last_component,
         }
     }
 }
 
-pub type DerivationPathAbstractIndex<U> =
+pub type DerivationPathAbstractIndex<U: KeySpaced> =
     DerivationRequestAbstractFactorAbstractIndex<FactorSourceIDFromHash, U>;
-impl<T> DerivationPathAbstractIndex<T> {
+
+impl<U: KeySpaced> DerivationPathAbstractIndex<U> {
     pub fn factor_source_id(&self) -> FactorSourceIDFromHash {
         self.abstract_factor.clone()
     }
@@ -46,23 +58,45 @@ impl<T> DerivationPathAbstractIndex<T> {
         network_id: NetworkID,
         entity_kind: CAP26EntityKind,
         key_kind: CAP26KeyKind,
-        abstract_index: T,
+        key_space: KeySpace,
+        abstract_last_component: U,
     ) -> Self {
         Self::abstract_abstract_new(
             factor_source_id,
             network_id,
             entity_kind,
             key_kind,
-            abstract_index,
+            key_space,
+            abstract_last_component,
         )
     }
 }
-
+pub(crate) const BIP32_HARDENED: u32 = 0x8000_0000;
+pub(crate) const BIP32_SECURIFIED_HALF: u32 = 0x4000_0000;
+impl KeySpaced for CAP26Index {
+    fn is_in_key_space(&self, key_space: KeySpace) -> bool {
+        match self {
+            CAP26Index::Unsecurified(_) => key_space == KeySpace::Unsecurified,
+            CAP26Index::Securified(_) => key_space == KeySpace::Securified,
+        }
+    }
+}
+impl KeySpaced for KeySpace {
+    fn is_in_key_space(&self, key_space: KeySpace) -> bool {
+        key_space == *self
+    }
+}
+impl KeySpaced for Range<CAP26Index> {
+    fn is_in_key_space(&self, key_space: KeySpace) -> bool {
+        self.clone()
+            .collect_vec()
+            .into_iter()
+            .all(|i| i.is_in_key_space(key_space))
+    }
+}
+pub type DerivationRequestWithRange = DerivationPathAbstractIndex<Range<CAP26Index>>;
 pub type DerivationRequestInKeySpace = DerivationPathAbstractIndex<KeySpace>;
 impl DerivationRequestInKeySpace {
-    pub fn key_space(&self) -> KeySpace {
-        self.abstract_index
-    }
     pub fn new(
         factor_source_id: FactorSourceIDFromHash,
         network_id: NetworkID,
@@ -76,6 +110,26 @@ impl DerivationRequestInKeySpace {
             entity_kind,
             key_kind,
             key_space,
+            key_space,
+        )
+    }
+}
+impl DerivationRequestWithRange {
+    pub fn new(
+        factor_source_id: FactorSourceIDFromHash,
+        network_id: NetworkID,
+        entity_kind: CAP26EntityKind,
+        key_kind: CAP26KeyKind,
+        key_space: KeySpace,
+        range: Range<CAP26Index>,
+    ) -> Self {
+        Self::new_with_factor_source_id(
+            factor_source_id,
+            network_id,
+            entity_kind,
+            key_kind,
+            key_space,
+            range,
         )
     }
 }
@@ -97,29 +151,54 @@ pub type DerivationRequestWithoutFactorInKeySpace =
     DerivationRequestAbstractFactorAbstractIndex<(), KeySpace>;
 
 impl DerivationRequestWithoutFactorInKeySpace {
-    pub fn key_space(&self) -> KeySpace {
-        self.abstract_index.clone()
+    pub fn with_factor_source(self, factor_source: &FactorSource) -> DerivationRequestInKeySpace {
+        DerivationRequestInKeySpace::new(
+            factor_source.factor_source_id.clone(),
+            self.network_id,
+            self.entity_kind,
+            self.key_kind,
+            self.key_space,
+        )
     }
 }
 
 impl DerivationPath {
     pub fn index(&self) -> CAP26Index {
-        self.abstract_index.clone()
+        self.abstract_last_component.clone()
     }
 
     pub fn key_space(&self) -> KeySpace {
-        self.index().key_space()
+        assert_eq!(self.index().key_space(), self.key_space);
+        self.key_space
     }
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct AbstractDerivationRequests(IndexSet<DerivationRequestWithoutFactorInKeySpace>);
+impl AbstractDerivationRequests {
+    pub fn for_each_factor_sources(
+        &self,
+        factor_sources: FactorSources,
+    ) -> IndexSet<DerivationRequestInKeySpace> {
+        factor_sources
+            .factor_sources()
+            .iter()
+            .flat_map(|f| self.0.clone().into_iter().map(|x| x.with_factor_source(f)))
+            .collect()
+    }
+}
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FactorSources(Vec<FactorSource>);
 impl FactorSources {
+    pub fn from_iter(iter: impl IntoIterator<Item = FactorSource>) -> Self {
+        Self(iter.into_iter().collect())
+    }
     pub fn factor_sources(&self) -> IndexSet<FactorSource> {
         self.0.clone().into_iter().collect()
+    }
+    pub fn just(factor_source: FactorSource) -> Self {
+        Self(vec![factor_source])
     }
     pub fn insert(&mut self, factor_source: FactorSource) {
         assert!(!self.0.iter().any(|f| f == &factor_source));
@@ -262,14 +341,68 @@ impl ProfileAnalyzer {
     }
 }
 
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct CachedFactorInstances(pub IndexMap<DerivationRequestInKeySpace, FactorInstances>);
+
 #[derive(Debug, Default)]
 pub struct Cache {
-    factor_instances_for_requests: RwLock<IndexMap<DerivationRequestInKeySpace, FactorInstances>>,
+    factor_instances_for_requests: RwLock<CachedFactorInstances>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheLoadOutcome {
+    pub requests: IndexSet<DerivationRequestInKeySpace>,
+    /// Response to `requests`
+    pub factor_instances: CachedFactorInstances,
+    /// If `factor_instances` response satisfies all `requests`
+    pub is_satisfying_all_requests: bool,
+    /// If we should derive more factor instances after this response, either
+    /// because we consumed the last factor instance in the cache or because
+    /// we did not fully satisfy all requests.
+    pub should_derive_more: bool,
+}
+impl CacheLoadOutcome {
+    pub fn is_empty(&self) -> bool {
+        self.factor_instances.0.is_empty()
+    }
+}
+
+impl Cache {
+    fn get(&self, key: &DerivationRequestInKeySpace) -> Option<FactorInstances> {
+        self.factor_instances_for_requests
+            .try_read()
+            .unwrap()
+            .0
+            .get(key)
+            .cloned()
+    }
+
+    pub async fn load(
+        &self,
+        requests: IndexSet<DerivationRequestInKeySpace>,
+    ) -> Result<CacheLoadOutcome> {
+        let mut found = CachedFactorInstances::default();
+        let mut failure = false;
+        for key in requests.iter() {
+            let Some(loaded) = self.get(key) else {
+                failure = true;
+                continue;
+            };
+            found.0.insert(key.clone(), loaded);
+        }
+
+        Ok(CacheLoadOutcome {
+            requests,
+            factor_instances: found,
+            is_satisfying_all_requests: !failure,
+            should_derive_more: failure,
+        })
+    }
 }
 impl Cache {
     fn with_map(map: IndexMap<DerivationRequestInKeySpace, FactorInstances>) -> Self {
         Self {
-            factor_instances_for_requests: RwLock::new(map),
+            factor_instances_for_requests: RwLock::new(CachedFactorInstances(map)),
         }
     }
     pub fn new(probably_free_factor_instances: ProbablyFreeFactorInstances) -> Self {
@@ -310,12 +443,38 @@ pub struct FinalDerivationsFinalAndAnalysis {
 
 pub type HDPathValue = u32;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd)]
 pub enum CAP26Index {
     Unsecurified(HDPathValue),
     Securified(HDPathValue),
 }
+impl Step for CAP26Index {
+    fn steps_between(start: &Self, end: &Self) -> Option<usize> {
+        todo!()
+    }
+
+    fn forward_checked(start: Self, count: usize) -> Option<Self> {
+        todo!()
+    }
+
+    fn backward_checked(start: Self, count: usize) -> Option<Self> {
+        todo!()
+    }
+}
 impl CAP26Index {
+    pub fn new(base_index: HDPathValue) -> Self {
+        if base_index <= (BIP32_HARDENED + BIP32_SECURIFIED_HALF) {
+            Self::Unsecurified(base_index)
+        } else {
+            Self::Securified(base_index)
+        }
+    }
+    pub fn base_index(&self) -> HDPathValue {
+        match self {
+            CAP26Index::Unsecurified(v) => *v,
+            CAP26Index::Securified(v) => *v,
+        }
+    }
     pub fn key_space(&self) -> KeySpace {
         match self {
             CAP26Index::Unsecurified(_) => KeySpace::Unsecurified,

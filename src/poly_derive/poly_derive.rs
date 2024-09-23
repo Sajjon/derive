@@ -38,6 +38,28 @@ pub enum PolyDeriveRequestKind {
         matrix_of_factor_sources: MatrixOfFactorSources,
     },
 }
+impl PolyDeriveRequestKind {
+    pub fn factor_sources(&self) -> FactorSources {
+        match self {
+            Self::OARS { factor_sources } => factor_sources.clone(),
+            Self::MARS { factor_source, .. } => FactorSources::just(factor_source.clone()),
+            Self::PreDeriveInstancesForNewFactorSource { factor_source } => {
+                FactorSources::just(factor_source.clone())
+            }
+            Self::NewVirtualUnsecurifiedAccount { factor_source, .. } => {
+                FactorSources::just(factor_source.clone())
+            }
+            Self::SecurifyUnsecurifiedAccount {
+                matrix_of_factor_sources,
+                ..
+            } => matrix_of_factor_sources.all_factor_sources(),
+            Self::UpdateSecurifiedAccount {
+                matrix_of_factor_sources,
+                ..
+            } => matrix_of_factor_sources.all_factor_sources(),
+        }
+    }
+}
 
 /// Offsets to next derivation entity index to use for a given
 /// factor source selector.
@@ -224,13 +246,45 @@ impl PolyDerivation {
             .await
     }
 
-    async fn derive_more(&self) -> Result<()> {
-        //    let index_offset = self.cache_with_cursor.try_read().unwrap().
-        // let requests = ...;
-        // if let Some(cached) = self.cache.load(&requests).await? {
-        //     analysis.merge(cached);
-        //     return Ok(());
-        // }
+    fn requests(&self) -> AbstractDerivationRequests {
+        todo!()
+    }
+
+    fn factor_sources(&self) -> FactorSources {
+        self.request_kind.factor_sources()
+    }
+
+    async fn load_or_derive_instances(&self) -> Result<()> {
+        let factor_sources = self.factor_sources();
+        let abstract_requests = self.requests();
+        let requests_without_indices = abstract_requests.for_each_factor_sources(factor_sources);
+        let cached = self.cache.load(requests_without_indices).await?;
+
+        let to_derive = IndexMap::new();
+       
+
+       if !cached.is_empty() {
+            let remaining = derivation_requests - cached;
+
+            if remaining.is_empty() {
+                /// Could satisfy derivation request from cache
+                return Ok(());
+            } else {
+                to_derive = remaining
+            }
+        } else {
+            // no cache... need to determine indices to derive from Profile
+            to_derive = self.profile_analyser.next_derivation_paths_fulfilling(&requests_without_indices);
+        }
+     
+
+        /// need to derive more
+        let keys_collector = KeysCollector::new(
+            self.factor_sources(),
+            remaining,
+            self.derivation_interactors,
+        )?;
+
         todo!()
     }
 
@@ -245,7 +299,7 @@ impl PolyDerivation {
             if is_done {
                 break;
             }
-            self.derive_more().await?;
+            self.load_or_derive_instances().await?;
         }
 
         let derived_instances = self.derived_instances();

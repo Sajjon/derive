@@ -86,7 +86,7 @@ impl FactorInstance {
         self.derivation_path.erase_to_in_key_space()
     }
     pub fn key_space(&self) -> KeySpace {
-        self.derivation_in_key_space().key_space()
+        self.derivation_in_key_space().key_space
     }
     pub fn factor_source_id(&self) -> FactorSourceIDFromHash {
         self.factor_source_id.clone()
@@ -100,6 +100,14 @@ pub struct MatrixOfAbstractFactor<T> {
     override_factors: Vec<T>,
 }
 pub type MatrixOfFactorSources = MatrixOfAbstractFactor<FactorSource>;
+impl MatrixOfFactorSources {
+    pub fn all_factor_sources(&self) -> FactorSources {
+        let mut set = IndexSet::new();
+        set.extend(self.threshold_factors.iter().cloned());
+        set.extend(self.override_factors.iter().cloned());
+        FactorSources::from_iter(set)
+    }
+}
 pub type MatrixOfFactorInstances = MatrixOfAbstractFactor<FactorInstanceInSecurifiedSpace>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
